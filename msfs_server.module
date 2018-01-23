@@ -1,0 +1,227 @@
+<?php
+
+/**
+ * Implements hook_menu().
+ */
+function msfs_server_menu()
+{
+  return [
+    'admin/config/media/msfs_server' => [
+      'title' => 'MSFS server configuration',
+      'page callback' => 'drupal_get_form',
+      'page arguments' => ['_msfs_server_settings_form'],
+      'access callback' => TRUE,
+    ],
+    'msfs/api/ping' => [
+      'title' => '',
+      'title callback' => FALSE,
+      'page callback' => '_msfs_server_api_ping',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+    ],
+    'msfs/api/info' => [
+      'title' => '',
+      'title callback' => FALSE,
+      'page callback' => '_msfs_server_api_info',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+      'delivery callback' => 'drupal_json_output',
+    ],
+    'msfs/api/file/save' => [
+      'title' => '',
+      'title callback' => FALSE,
+      'page callback' => '_msfs_server_api_file_save',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+      'delivery callback' => 'drupal_json_output',
+    ],
+    'msfs/api/file/load' => [
+      'title' => '',
+      'title callback' => FALSE,
+      'page callback' => '_msfs_server_api_file_load',
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+      'delivery callback' => 'drupal_json_output',
+    ],
+  ];
+}
+
+function _msfs_server_settings_form($form, &$form_state)
+{
+
+  $form['msfs_server_access_key'] = [
+    '#type' => 'markup',
+    '#markup' => '<p>This server <b>access key</b>: ' . variable_get('msfs_server_access_key') . '</p>'
+  ];
+
+  $form['msfs_server_ftp_host'] = [
+    '#type' => 'textfield',
+    '#title' => t('FTP host'),
+    '#required' => TRUE,
+    '#default_value' => variable_get('msfs_server_ftp_host', $_SERVER['SERVER_ADDR']),
+  ];
+
+  $form['msfs_server_ftp_user'] = [
+    '#type' => 'textfield',
+    '#title' => t('FTP user'),
+    '#required' => TRUE,
+    '#default_value' => variable_get('msfs_server_ftp_user'),
+  ];
+
+  $form['msfs_server_ftp_password'] = [
+    '#type' => 'textfield',
+    '#title' => t('FTP password'),
+    '#required' => TRUE,
+    '#default_value' => variable_get('msfs_server_ftp_password'),
+  ];
+
+  $form['msfs_server_ftp_upload_dir'] = [
+    '#type' => 'textfield',
+    '#title' => t('FTP upload dir'),
+    '#value' => drupal_realpath(variable_get('file_public_path', conf_path() . '/files')),
+    '#disabled' => TRUE,
+  ];
+
+  $form['msfs_server_info'] = [
+    '#type' => 'markup',
+    '#markup' => '<a href="/msfs/api/info?access_key='.variable_get('msfs_server_access_key').'" target="_blank">'.t('View server info').'</a>',
+    '#weight' => 200,
+  ];
+
+  return system_settings_form($form);
+}
+
+function _msfs_server_api_start()
+{
+  // check access
+  $GET = drupal_get_query_parameters();
+  // setup API caching
+  if (isset($GET['ignore_caching'])) {
+    drupal_page_is_cacheable(FALSE);
+  } else {
+    drupal_page_is_cacheable(TRUE);
+  }
+  if ($GET['access_key'] != variable_get('msfs_server_access_key')) {
+    return [
+      'status' => 'FAIL',
+      'errors' => ['Invalid access key!']
+    ];
+  }
+
+}
+
+function _msfs_server_api_ping()
+{
+  _msfs_server_api_start();
+  echo 'pong';
+}
+
+function _msfs_server_api_info()
+{
+  _msfs_server_api_start();
+  return _msfs_server_info();
+}
+
+function _msfs_server_info()
+{
+  // TODO: generate status dynamically
+  return [
+    'status' => 'OK',
+    'files_stored' => _msfs_server_count_uploads(),
+    'server' => [
+      'OS_INFO' => php_uname(),
+      'PHP_VERSION' => phpversion(),
+      '_SERVER' => $_SERVER,
+    ],
+    'disk' => [
+      'total' => disk_total_space(variable_get('msfs_server_drupal_install_disk')),
+      'free' => disk_free_space(variable_get('msfs_server_drupal_install_disk')),
+    ],
+    'version' => system_get_info('module', 'msfs_server')['version'],
+    'transfer' => [
+      'ftp' => [
+        'host' => variable_get('msfs_server_ftp_host'),
+        'user' => variable_get('msfs_server_ftp_user'),
+        'password' => variable_get('msfs_server_ftp_password'),
+        'upload_dir' => variable_get('msfs_server_ftp_upload_dir'),
+      ],
+    ],
+  ];
+}
+
+function _msfs_server_api_file_save()
+{
+  _msfs_server_api_start();
+  if ($_SERVER['REQUEST_METHOD'] != 'POST') {
+    drupal_access_denied();
+  }
+  // save uploaded file as managed and write record to our table with api uploads
+  $dir = file_default_scheme() . '://' . $_POST['filepath'];
+  $destination = $dir . DIRECTORY_SEPARATOR;
+  drupal_mkdir($dir, NULL, TRUE);
+  if ($file = _msfs_server_file_save_upload('filecontent', $destination)) {
+    $msfs_server_new_upload_data = ['fid' => $file->fid];
+    drupal_write_record('msfs_server_uploads', $msfs_server_new_upload_data);
+    $response = [
+      'status' => 'OK',
+      'raw_file' => $file,
+    ];
+  } else {
+    $response = [
+      'status' => 'FAIL',
+      'errors' => ['Can\'t save file']
+    ];
+  }
+  return $response;
+}
+
+function _msfs_server_file_save_upload($form_field_name, $destination)
+{
+  if (count($_FILES) == 1) {
+    $element = &reset($_FILES);
+    foreach ($element as $key => $value) {
+      $_FILES['files'][$key][$form_field_name] = $value;
+    }
+    unset($_FILES[$form_field_name]);
+  }
+  return file_save_upload($form_field_name, array(), $destination, FILE_EXISTS_RENAME);
+}
+
+function _msfs_server_api_file_load($id = NULL)
+{
+  _msfs_server_api_start();
+  $response = [];
+  if (!$id) {
+    $response['status'] = 'FAIL';
+    $response['errors'] = 'Empty id!';
+  } else {
+    if ($file = _msfs_server_file_load($id)) {
+      $response['status'] = 'OK';
+      $response['file'] = [
+        'url' => file_create_url($file->uri),
+        'raw' => $file,
+      ];
+    } else {
+      $response['status'] = 'FAIL';
+      $response['errors'] = ['Failed to select file! from database'];
+    }
+  }
+  return $response;
+}
+
+function _msfs_server_count_uploads()
+{
+  return db_select('msfs_server_uploads', 'u')->countQuery()->execute()->fetchField();
+}
+
+function _msfs_server_file_load($id)
+{
+  $u_query = db_select('msfs_server_uploads', 'u');
+  $u_query->condition('u.id', $id);
+  $u_query->fields('u', ['fid']);
+  $fid = $u_query->execute()->fetchCol('fid')[0];
+  if ($file = file_load($fid)) {
+    return $file;
+  }
+  return FALSE;
+}

@@ -1,0 +1,4 @@
+name = MSFS server backend
+core = 7.x
+version = 0.1
+configure = admin/config/media/msfs_server

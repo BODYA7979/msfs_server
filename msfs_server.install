@@ -1,0 +1,42 @@
+<?php
+
+/**
+ * Implements hook_schema().
+ */
+function msfs_server_schema() {
+  return [
+    'msfs_server_uploads' => [
+      'description' => 'Files uploaded via MSFS API',
+      'fields' => [
+        'id' => [
+          'description' => 'ID for uploaded file',
+          'type' => 'serial',
+          'not null' => TRUE,
+          'unsigned' => TRUE,
+        ],
+        'fid' => [
+          'description' => 'Reference to managed file id (fid)',
+          'type' => 'int',
+          'not null' => TRUE,
+          'unsigned' => TRUE,
+        ],
+      ],
+      'foreign keys' => [
+        'fid' => [
+          'table' => 'file_managed',
+          'columns' => ['fid' => 'fid'],
+        ],
+      ],
+      'primary key' => ['id'],
+    ],
+  ];
+}
+
+function msfs_server_install() {
+  variable_set('msfs_server_access_key', drupal_random_key(32));
+  $disk = mb_substr($_SERVER['DOCUMENT_ROOT'], 0, 1);
+  if (PHP_OS_FAMILY == 'Windows') {
+    $disk .= ':\'';
+  }
+  variable_set('msfs_server_drupal_install_disk', $disk);
+}
