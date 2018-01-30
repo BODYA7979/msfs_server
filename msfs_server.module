@@ -164,6 +164,7 @@ function _msfs_server_api_file_save()
     drupal_write_record('msfs_server_uploads', $msfs_server_new_upload_data);
     $response = [
       'status' => 'OK',
+      'id' => $msfs_server_new_upload_data['id'],
       'raw_file' => $file,
     ];
   } else {
